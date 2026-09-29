@@ -1,0 +1,75 @@
+# Local test data and migration experiments
+/测试用例/
+/tests/
+/src/flow4d/test.py
+/src/flow4d/final_test.py
+/src/flow4d/temp.py
+test_*.py
+*_test.py
+
+# Personal notes and development-agent instructions
+/CLAUDE.md
+/AGENTS.md
+/流程理解.md
+/迁移进度.md
+/docs/学习指南.md
+/docs/学习笔记.md
+/docs/00_迁移设计.md
+/docs/superpowers/
+/docs/*external_validation.md
+/.agents/
+/.codex/
+/.github-upload/
+
+# Python environments and caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+*.egg-info/
+.coverage*
+htmlcov/
+
+# Native build intermediates; retain the deployed runtime DLL under src/
+build/
+dist/
+*.obj
+*.lib
+*.exp
+*.pdb
+*.tlog
+
+# Editor settings, credentials and operating-system files
+.idea/
+.vscode/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+Thumbs.db
+Desktop.ini
+*.tmp
+*.log
+
+# Patient data and generated numerical/visualization results
+DICOM_4D_Qflow/
+checkpoints/
+*.dcm
+*.DCM
+*.ima
+*.npy
+*.npz
+*.mat
+*.vtk
+*.vtu
+*.pvd
+*.stl
+*.dat
+*.plt
+overall_flow_status.json
+pressure_iterations.jsonl
