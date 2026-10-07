@@ -9,8 +9,9 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sys
+from tempfile import NamedTemporaryFile
 import traceback
-from time import perf_counter, time
+from time import perf_counter, sleep, time
 from typing import Any, Iterator
 
 import numpy as np
@@ -186,11 +187,32 @@ class ProgressReport:
         self._write()
 
     def _write(self) -> None:
-        temporary = self.path.with_name(self.path.name + ".tmp")
-        temporary.write_text(
-            json.dumps(self.data, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        temporary.replace(self.path)
+        payload = json.dumps(self.data, ensure_ascii=False, indent=2)
+        temporary: Path | None = None
+        try:
+            # A distinct, closed file avoids collisions and preserves atomic reads.
+            with NamedTemporaryFile(
+                mode="w", encoding="utf-8", dir=self.output,
+                prefix=self.path.name + ".", suffix=".tmp", delete=False,
+            ) as handle:
+                temporary = Path(handle.name)
+                handle.write(payload)
+            for attempt in range(6):
+                try:
+                    temporary.replace(self.path)
+                    break
+                except OSError as error:
+                    # Windows readers can briefly deny deletion/rename sharing.
+                    if getattr(error, "winerror", None) not in (5, 32, 33) or attempt == 5:
+                        raise
+                    sleep(0.05 * 2 ** attempt)
+        finally:
+            if temporary is not None:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    # Do not mask a write failure with a cleanup failure.
+                    pass
 
     @contextmanager
     def step(self, number: str) -> Iterator[dict[str, Any]]:
