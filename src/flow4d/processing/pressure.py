@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from time import perf_counter
 
 import numpy as np
 from numpy.typing import NDArray
 from scipy.interpolate import CubicSpline
 from scipy.sparse import csr_matrix
-from scipy.sparse.linalg import cgs
+from scipy.sparse.linalg import LinearOperator, cgs
 
 try:
     from ..base_function import RuntimeTimer, TimingRecord
@@ -47,6 +48,10 @@ class PressureResult:
     solver_info: tuple[int, ...]
     timings: tuple[TimingRecord, ...]
     total_elapsed_seconds: float
+    iteration_counts: tuple[int, ...] = ()
+    solve_elapsed_seconds: tuple[float, ...] = ()
+    relative_residuals: tuple[float, ...] = ()
+    retry_counts: tuple[int, ...] = ()
 
 
 def _as_velocity_timeseries(velocity: NDArray[np.generic]) -> NDArray[np.float64]:
@@ -188,7 +193,7 @@ def compute_pressure_tetra_sparse(
     max_iterations: int = 1_000_000,
     preserve_matlab_dudy_column_bug: bool = True,
 ) -> PressureResult:
-    """使用 SciPy CGS 移植 ``calc_pressure_tetra_sparse.m``
+    """使用带 Jacobi 预条件和时相 warm start 的 CGS 重建压力
 
     MATLAB 源代码同时从第 9 列读取 ``dudy`` 和 ``dudz``，默认保留该行为
     只有明确要求修正计算时，才将 ``preserve_matlab_dudy_column_bug``
@@ -235,8 +240,25 @@ def compute_pressure_tetra_sparse(
         pressure_gradient = np.stack((dpdx, dpdy, dpdz), axis=1)
 
     laplacian = build_pressure_laplacian(operators)
+    with timer.measure("构建 Jacobi 压力预条件器"):
+        diagonal = laplacian.diagonal()
+        if not np.all(np.isfinite(diagonal)) or np.any(diagonal < 0.0):
+            raise PressureReconstructionError("压力矩阵对角元素必须为非负有限数值")
+        # Zero diagonal entries in this Gram matrix have no gradient coupling.
+        # Unit scaling avoids division by zero without imposing a pressure gauge.
+        scale = np.where(diagonal > 0.0, diagonal, 1.0)
+        preconditioner = LinearOperator(
+            laplacian.shape,
+            matvec=lambda residual: np.asarray(residual).reshape(-1) / scale,
+            dtype=np.float64,
+        )
     pressure = np.empty((node_count, 1, phase_count), dtype=np.float64)
     solver_info: list[int] = []
+    iteration_counts: list[int] = []
+    solve_elapsed_seconds: list[float] = []
+    relative_residuals: list[float] = []
+    retry_counts: list[int] = []
+    previous_solution = None
     with timer.measure("逐时相 CGS 压力重建"):
         for phase_index in range(phase_count):
             right_hand_side = (
@@ -244,19 +266,65 @@ def compute_pressure_tetra_sparse(
                 + operators.y.T @ dpdy[:, phase_index]
                 + operators.z.T @ dpdz[:, phase_index]
             )
-            solution, info = cgs(
-                laplacian,
-                right_hand_side,
-                rtol=tolerance,
-                atol=0.0,
-                maxiter=max_iterations,
-            )
-            solver_info.append(int(info))
-            if info != 0:
+            started = perf_counter()
+            iterations = 0
+            retries = 0
+
+            def count_iteration(_: NDArray[np.float64]) -> None:
+                nonlocal iterations
+                iterations += 1
+
+            rhs_norm = float(np.linalg.norm(right_hand_side))
+            if not np.isfinite(rhs_norm):
                 raise PressureReconstructionError(
-                    f"时相 {phase_index + 1} 的 CGS 未收敛，solver info={info}"
+                    f"时相 {phase_index + 1} 的压力右端范数不是有限数值"
                 )
+            if not np.any(right_hand_side):
+                solution = np.zeros(node_count, dtype=np.float64)
+                info = 0
+                relative_residual = 0.0
+            else:
+                # A failed warm start gets one fresh attempt with the same M.
+                for attempt in range(2 if previous_solution is not None else 1):
+                    solution, info = cgs(
+                        laplacian,
+                        right_hand_side,
+                        x0=previous_solution if attempt == 0 else None,
+                        M=preconditioner,
+                        rtol=tolerance,
+                        atol=0.0,
+                        maxiter=max_iterations,
+                        callback=count_iteration,
+                    )
+                    if np.all(np.isfinite(solution)):
+                        residual_norm = float(np.linalg.norm(
+                            right_hand_side - laplacian @ solution
+                        ))
+                    else:
+                        residual_norm = float("inf")
+                    relative_residual = (
+                        residual_norm / rhs_norm if rhs_norm > 0.0 else float("inf")
+                    )
+                    if (
+                        info == 0
+                        and np.isfinite(relative_residual)
+                        and residual_norm <= tolerance * rhs_norm
+                    ):
+                        break
+                    if attempt == 0 and previous_solution is not None:
+                        retries = 1
+                else:
+                    raise PressureReconstructionError(
+                        f"时相 {phase_index + 1} 的 CGS 未收敛，solver info={info}，"
+                        f"原方程相对残差={relative_residual:.6g}，重试次数={retries}"
+                    )
+            solver_info.append(int(info))
             pressure[:, 0, phase_index] = solution
+            previous_solution = solution.copy()
+            iteration_counts.append(iterations)
+            solve_elapsed_seconds.append(perf_counter() - started)
+            relative_residuals.append(relative_residual)
+            retry_counts.append(retries)
 
     return PressureResult(
         pressure_native_units=pressure,
@@ -265,4 +333,8 @@ def compute_pressure_tetra_sparse(
         solver_info=tuple(solver_info),
         timings=timer.records,
         total_elapsed_seconds=timer.total_elapsed_seconds,
+        iteration_counts=tuple(iteration_counts),
+        solve_elapsed_seconds=tuple(solve_elapsed_seconds),
+        relative_residuals=tuple(relative_residuals),
+        retry_counts=tuple(retry_counts),
     )
