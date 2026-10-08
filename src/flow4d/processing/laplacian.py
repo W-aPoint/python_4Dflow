@@ -3,13 +3,67 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import numpy as np
 from numpy.typing import NDArray
+from scipy.fft import fftn, ifftn
 
 
 class LaplacianError(RuntimeError):
     """FFT Laplacian 的输入或核无效时抛出"""
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedLaplacianKernel:
+    """Validated kernel in the native FFT frequency order, scoped to one run."""
+
+    native: NDArray[np.generic]
+
+
+def _prepare_laplacian_kernel(kernel: NDArray[np.generic]) -> _PreparedLaplacianKernel:
+    values = np.asarray(kernel)
+    if not np.all(np.isfinite(values)):
+        raise LaplacianError("Laplacian 频域核包含 NaN/Inf")
+    native = np.fft.ifftshift(values)
+    native.setflags(write=False)
+    return _PreparedLaplacianKernel(native)
+
+
+def _laplacian_fft_prepared(
+    values: NDArray[np.generic],
+    direction: int,
+    kernel: _PreparedLaplacianKernel,
+    real_output: bool,
+) -> NDArray[np.generic]:
+    # The unwrap pipeline always uses double precision, independently of the
+    # FFT library's version-dependent single-precision behavior.
+    array = np.asarray(
+        values, dtype=np.complex128 if np.iscomplexobj(values) else np.float64
+    )
+    if array.shape != kernel.native.shape:
+        raise LaplacianError("输入形状与 Laplacian 核不一致")
+    if not np.all(np.isfinite(array)):
+        raise LaplacianError("Laplacian 输入包含 NaN/Inf")
+    if direction not in (1, -1):
+        raise ValueError("direction 只能为 1（正向）或 -1（逆向）")
+
+    # A Fourier multiplier commutes with circular spatial shifts. Moving only
+    # the kernel to native order cancels the original input/output shifts,
+    # including odd dimensions; retain the exact legacy kernel coefficients.
+    spectrum = fftn(array, workers=1)
+    if direction == 1:
+        np.multiply(spectrum, kernel.native, out=spectrum)
+    else:
+        inverse_kernel = kernel.native.astype(np.float64, copy=True)
+        inverse_kernel[(0,) * array.ndim] = 1.0
+        with np.errstate(divide="ignore", invalid="ignore"):
+            np.divide(spectrum, inverse_kernel, out=spectrum)
+        del inverse_kernel
+    output = ifftn(spectrum, workers=1)
+    if real_output:
+        return np.array(output.real, copy=True)
+    return np.asarray(output)
 
 
 def _validated_shape(shape: Sequence[int], dimensions: int) -> tuple[int, ...]:
@@ -124,4 +178,10 @@ def laplacian_fft_4d(
 
     if np.asarray(values).ndim != 4:
         raise LaplacianError("laplacian_fft_4d 需要四维输入")
-    return _laplacian_fft(values, direction, kernel, real_output)
+    # Preserve the existing public NumPy behavior for other input dtypes.
+    # The production unwrap path converts phase to float64 before arriving here.
+    if np.asarray(values).dtype not in (np.dtype(np.float64), np.dtype(np.complex128)):
+        return _laplacian_fft(values, direction, kernel, real_output)
+    return _laplacian_fft_prepared(
+        values, direction, _prepare_laplacian_kernel(kernel), real_output
+    )

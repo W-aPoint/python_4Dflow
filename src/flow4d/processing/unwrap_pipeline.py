@@ -16,7 +16,8 @@ except ImportError:
     from base_function import RuntimeTimer, TimingRecord  # type: ignore[no-redef]
     from dicom.case_loader import LoadedDicomCase  # type: ignore[no-redef]
 
-from .phase_unwrap import unwrap_phase_4d
+from .laplacian import _prepare_laplacian_kernel, build_laplacian_kernel_4d
+from .phase_unwrap import _unwrap_phase_4d_prepared
 
 
 class UnwrapPipelineError(RuntimeError):
@@ -138,6 +139,10 @@ def run_unwrap_pipeline(
     wrap_counts: list[NDArray[np.int8]] = []
     labels = ("RL", "FH", "AP")
     source_components = (case.rl, case.fh, case.ap)
+    with timer.measure("准备共享四维 Laplacian 核"):
+        kernel = _prepare_laplacian_kernel(
+            build_laplacian_kernel_4d(case.shape, temporal_scale)
+        )
     for component, (label, source) in enumerate(zip(labels, source_components)):
         with timer.measure(f"从 {label} 重建原始速度与相位"):
             component_phase = source.astype(np.float64)
@@ -149,9 +154,9 @@ def run_unwrap_pipeline(
             component_phase /= case.venc
 
         with timer.measure(f"{label} 四维 Laplacian 解混叠"):
-            component_wrap_counts = unwrap_phase_4d(
+            component_wrap_counts = _unwrap_phase_4d_prepared(
                 component_phase,
-                temporal_scale=temporal_scale,
+                kernel,
                 real_output=True,
             )
             wrap_counts.append(component_wrap_counts)
