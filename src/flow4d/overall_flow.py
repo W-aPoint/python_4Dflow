@@ -1157,20 +1157,25 @@ def _launch_gui() -> int:
                 return
             if mode == "run":
                 choice = QMessageBox(self)
-                choice.setWindowTitle("确认速度来源")
-                choice.setText(
-                    "请选择后续解混叠使用的速度来源。若已有完整 PCA，选原始速度会跳过 MSAC；"
-                    "选 MSAC 仍会执行背景校正。同名生成结果可能覆盖，请核对输出目录。"
+                choice.setWindowTitle("确认开始计算")
+                source_description = (
+                    "原始数据（已执行相位边界校正）"
+                    if self.source_choice.currentData() == "raw"
+                    else "MSAC 背景校正数据"
                 )
-                raw_button = choice.addButton("使用原始速度", QMessageBox.AcceptRole)
-                msac_button = choice.addButton("使用 MSAC", QMessageBox.AcceptRole)
-                choice.addButton("取消", QMessageBox.RejectRole)
+                choice.setText(
+                    f"本次解混叠使用：{source_description}。\n"
+                    "若需更改，请取消并在主页面调整速度来源。\n\n"
+                    "使用原始数据且已有可复用 PCA 时会跳过 MSAC；需要重新生成分割参考图时，"
+                    "仍会执行 MSAC。使用 MSAC 数据时会执行背景校正。\n"
+                    "同名生成结果可能覆盖，请核对输出目录。"
+                )
+                start_button = choice.addButton("开始", QMessageBox.AcceptRole)
+                cancel_button = choice.addButton("取消", QMessageBox.RejectRole)
+                choice.setDefaultButton(cancel_button)
+                choice.setEscapeButton(cancel_button)
                 choice.exec()
-                if choice.clickedButton() == raw_button:
-                    self.source_choice.setCurrentIndex(0)
-                elif choice.clickedButton() == msac_button:
-                    self.source_choice.setCurrentIndex(1)
-                else:
+                if choice.clickedButton() != start_button:
                     return
             self.process_mode = mode
             self.started_at = perf_counter()
