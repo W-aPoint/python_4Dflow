@@ -1,6 +1,6 @@
 # python_4Dflow
 
-4D Flow MRI 血流定量分析的 Python 实现，迁移自 AB4Dflow MATLAB 工程。主流程包括 DICOM 读取、相位及背景校正、速度解混叠、血管网格生成、速度平滑与 DFW 去噪、节点压力和 Liutex 计算，以及 VTK / Tecplot 导出。
+4D Flow MRI 血流定量分析的 Python 实现。主流程包括 DICOM 读取、相位及背景校正、速度解混叠、血管网格生成、速度平滑与 DFW 去噪、节点压力和 Liutex 计算，以及 VTK / Tecplot 导出。
 
 ## 文件结构
 
