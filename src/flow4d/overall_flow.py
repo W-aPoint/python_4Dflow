@@ -28,7 +28,6 @@ from .base_function.mask_directories import MaskDirectoryInventory, prepare_mask
 from .dicom.case_loader import LoadedDicomCase, load_dicom_case
 from .dicom.mask_loader import MaskVolumeResult, _load_stack, load_mask_volumes
 from .final_pipeline import run_final_postprocessing
-from .exporters.matlab_tecplot import export_matlab_dat_plt_series
 from .mesh.cgalmesh_backend import CgalMeshSurfaceBackend
 from .mesh.coordinates import scale_tetrahedral_nodes
 from .mesh.pipeline import run_mesh_pipeline
@@ -56,7 +55,6 @@ STEPS = (
     ("09", "Gaussian 与 DFW"),
     ("10", "节点结果、压力与 Liutex"),
     ("11", "核对最终 VTK 导出"),
-    ("12", "导出 UVW DAT 与 FEMbrick PLT"),
 )
 
 STEP_GUIDANCE = {
@@ -72,7 +70,6 @@ STEP_GUIDANCE = {
     "09": ("对速度做 Gaussian 和 DFW 处理", "裁剪速度、Mask 和 DFW DLL", "平滑后的速度场"),
     "10": ("采样节点并计算压力与 Liutex", "网格、速度、时间和体素间距", "节点结果；内部子步骤逐项计时"),
     "11": ("检查导出的时间序列", "节点结果和四面体", "各时相 VTK 与 series 索引"),
-    "12": ("保存 Tecplot 结果", "同一次运行的节点速度、FINAL 27 列和四面体", "dat 文件夹下每时相一个 UVW_*.dat 与 FEMbrick_*.plt"),
 }
 
 
@@ -833,23 +830,6 @@ def run(args: argparse.Namespace) -> int:
             "vtk_directory": str(exported.output_directory),
             "vtk_files": len(exported.vtk_files),
             "series_file": str(exported.series_file),
-        }
-    with report.step("12") as item:
-        tecplot = export_matlab_dat_plt_series(
-            final.node_sampling.variables_by_phase,
-            final.final_node_results,
-            tetrahedra,
-            output,
-            progress=lambda current, total: print(
-                f"    [12] DAT/PLT 时相 {current}/{total} 已写入", flush=True
-            ),
-        )
-        if len(tecplot.uvw_files) != case_phases or len(tecplot.plt_files) != case_phases:
-            raise RuntimeError("DAT/PLT 时相文件数量不符合输入病例时相数")
-        item["output"] = {
-            "dat_directory": str(tecplot.output_directory),
-            "uvw_files": len(tecplot.uvw_files),
-            "fembrick_files": len(tecplot.plt_files),
         }
     print(f"整体流程结束逐步记录：{report.path}")
     return 0

@@ -13,9 +13,7 @@ from numpy.typing import NDArray
 
 from .base_function import RuntimeTimer, TimingRecord
 from .exporters import (
-    TecplotBinarySeriesResult,
     VtkSeriesExportResult,
-    export_final_tecplot_binary_series,
     export_final_vtk_series,
 )
 from .mesh import NodeVelocityResult, sample_velocity_at_nodes
@@ -59,7 +57,6 @@ class FinalPostprocessingResult:
     pressure: PressureResult
     liutex: LiutexTimeSeriesResult
     final_node_results: NDArray[np.float64]
-    tecplot_binary_export: TecplotBinarySeriesResult | None
     vtk_export: VtkSeriesExportResult | None
     timings: tuple[TimingRecord, ...]
     total_elapsed_seconds: float
@@ -181,8 +178,6 @@ def run_final_postprocessing(
     connectivity_index_base: int,
     vtk_case_directory: str | Path | None = None,
     vtk_overwrite: bool = True,
-    tecplot_binary_directory: str | Path | None = None,
-    tecplot_binary_overwrite: bool = True,
     progress: Callable[[str, str, float | None], None] | None = None,
 ) -> FinalPostprocessingResult:
     """按 MATLAB 源码顺序执行 FINAL 的网格后计算"""
@@ -310,20 +305,6 @@ def run_final_postprocessing(
         ),
     )
 
-    tecplot_binary_export: TecplotBinarySeriesResult | None = None
-    if tecplot_binary_directory is not None:
-        tecplot_binary_export = run_stage(
-            timer,
-            "导出 FINAL Tecplot 二进制时间序列",
-            lambda: export_final_tecplot_binary_series(
-                final_results,
-                elements,
-                tecplot_binary_directory,
-                connectivity_index_base=connectivity_index_base,
-                overwrite=tecplot_binary_overwrite,
-            ),
-        )
-
     vtk_export: VtkSeriesExportResult | None = None
     if vtk_case_directory is not None:
         vtk_export = run_stage(
@@ -351,7 +332,6 @@ def run_final_postprocessing(
         pressure=pressure,
         liutex=liutex,
         final_node_results=final_results,
-        tecplot_binary_export=tecplot_binary_export,
         vtk_export=vtk_export,
         timings=timer.records,
         total_elapsed_seconds=timer.total_elapsed_seconds,
